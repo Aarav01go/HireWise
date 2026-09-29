@@ -1,4 +1,4 @@
-a# HireWise
+# HireWise
 
 An AI-powered HR Management System built for the Digital AI project (P_196).
 

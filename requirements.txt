@@ -1,6 +1,6 @@
-streamlit==1.32.0
+streamlit
 google-genai==0.3.0
 python-dotenv==1.0.1
-pandas==2.2.1
+pandas
 pypdf==4.1.0
-scikit-learn==1.4.1.post1
+scikit-learn

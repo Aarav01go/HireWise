@@ -60,7 +60,7 @@ def setup_database():
         ('Bob Engineer', 'bob@hirewise.com', 'Engineering', 'Software Engineer', '2021-03-10', 95000, 15),
         ('Charlie Sales', 'charlie@hirewise.com', 'Sales', 'Sales Exec', '2022-06-01', 65000, 10),
         ('Diana Market', 'diana@hirewise.com', 'Marketing', 'Marketing Lead', '2019-11-20', 90000, 25),
-        ('Aarav Patel', 'aarav@hirewise.com', 'Engineering', 'Junior Dev', '2023-08-01', 60000, 12)
+        ('Aarav Gupta', 'aarav@hirewise.com', 'Engineering', 'Junior Dev', '2023-08-01', 60000, 12)
     ]
     cursor.executemany('''
     INSERT INTO employees (name, email, department, designation, join_date, salary, leave_balance)
@@ -71,7 +71,7 @@ def setup_database():
     cursor.execute("SELECT id FROM employees WHERE name='Alice HR'")
     alice_id = cursor.fetchone()[0]
     
-    cursor.execute("SELECT id FROM employees WHERE name='Aarav Patel'")
+    cursor.execute("SELECT id FROM employees WHERE name='Aarav Gupta'")
     aarav_id = cursor.fetchone()[0]
 
     # Create 2 Dummy Logins (1 HR, 1 Employee)
