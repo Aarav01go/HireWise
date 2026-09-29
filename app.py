@@ -2,6 +2,17 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, date
+import os
+from dotenv import load_dotenv
+from google import genai
+
+# Load environment variables (for Gemini API Key)
+load_dotenv()
+
+try:
+    gemini_client = genai.Client()
+except Exception:
+    gemini_client = None
 
 st.set_page_config(page_title="HireWise HRMS", page_icon="🏢", layout="wide")
 
@@ -13,7 +24,6 @@ def get_db_connection():
 def login_user(username, password):
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Note: Plain text password comparison for dummy data
     cursor.execute("SELECT * FROM users WHERE username=? AND password_hash=?", (username, password))
     user = cursor.fetchone()
     conn.close()
@@ -87,7 +97,6 @@ def display_hr_dashboard():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Fetch pending leaves joined with employee names
         cursor.execute('''
             SELECT l.id, e.name, l.leave_type, l.start_date, l.end_date, l.reason, l.applied_on
             FROM leaves l
@@ -107,12 +116,10 @@ def display_hr_dashboard():
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.button("✅ Approve", key=f"approve_{leave['id']}"):
-                            # Calculate days taken
                             start = datetime.strptime(leave['start_date'], '%Y-%m-%d')
                             end = datetime.strptime(leave['end_date'], '%Y-%m-%d')
                             days_taken = (end - start).days + 1
                             
-                            # Update status and deduct balance
                             cursor.execute("UPDATE leaves SET status='Approved' WHERE id=?", (leave['id'],))
                             cursor.execute("UPDATE employees SET leave_balance = leave_balance - ? WHERE name=?", (days_taken, leave['name']))
                             conn.commit()
@@ -155,10 +162,10 @@ def display_employee_dashboard():
             
         st.divider()
         
-        st.subheader("📅 Leave Management")
-        tab1, tab2 = st.tabs(["Apply for Leave", "My Leave History"])
+        tab1, tab2, tab3 = st.tabs(["Apply for Leave", "My Leave History", "🤖 HR Assistant Chatbot"])
         
         with tab1:
+            st.subheader("📅 Apply for Time Off")
             with st.form("apply_leave_form"):
                 leave_type = st.selectbox("Leave Type", ["Casual Leave", "Sick Leave", "Paid Leave", "Unpaid Leave"])
                 
@@ -176,7 +183,6 @@ def display_employee_dashboard():
                         st.error("End date cannot be before start date.")
                     else:
                         days_requested = (end_date - start_date).days + 1
-                        # Check balance (ignore balance limit if it's unpaid leave)
                         if emp['leave_balance'] >= days_requested or leave_type == "Unpaid Leave":
                             cursor.execute('''
                             INSERT INTO leaves (employee_id, leave_type, start_date, end_date, reason, status, applied_on)
@@ -184,25 +190,97 @@ def display_employee_dashboard():
                             ''', (emp['id'], leave_type, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'), reason, 'Pending', date.today().strftime('%Y-%m-%d')))
                             conn.commit()
                             st.success(f"Leave application for {days_requested} days submitted successfully!")
-                            st.rerun() # Refresh to show in history immediately
+                            st.rerun() 
                         else:
                             st.error(f"Insufficient leave balance. You requested {days_requested} days, but only have {emp['leave_balance']} days available.")
                             
         with tab2:
+            st.subheader("📖 Leave History")
             df = pd.read_sql_query("SELECT leave_type, start_date, end_date, reason, status, applied_on FROM leaves WHERE employee_id=?", conn, params=(emp['id'],))
             if df.empty:
                 st.write("You haven't applied for any leaves yet.")
             else:
                 st.dataframe(df, use_container_width=True, hide_index=True)
                 
+        with tab3:
+            st.subheader("🤖 AI HR Assistant")
+            st.info("I am an AI assistant integrated with Gemini. Ask me about company policy or your personal leave balance!")
+            
+            if 'chat_history' not in st.session_state:
+                st.session_state['chat_history'] = []
+                
+            # Render chat history
+            for msg in st.session_state['chat_history']:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+                    
+            # Chat input
+            user_question = st.chat_input("E.g. What is the notice period? or How many leaves do I have?")
+            if user_question:
+                # Add user question
+                st.session_state['chat_history'].append({"role": "user", "content": user_question})
+                with st.chat_message("user"):
+                    st.markdown(user_question)
+                    
+                with st.chat_message("assistant"):
+                    if not gemini_client:
+                        st.error("Gemini API Client is not initialized. Please check your .env file and API key.")
+                    else:
+                        with st.spinner("Looking up HR Policies..."):
+                            try:
+                                # Read Policy Text
+                                policy_text = ""
+                                try:
+                                    with open("docs/hr_policy.txt", "r") as f:
+                                        policy_text = f.read()
+                                except FileNotFoundError:
+                                    policy_text = "No HR policy document found."
+                                
+                                # Construct the Prompt with Context (RAG)
+                                prompt = f"""
+                                You are HireWise, a helpful and professional HR Assistant Chatbot.
+                                You are talking directly to an employee.
+                                
+                                --- COMPANY HR POLICY ---
+                                {policy_text}
+                                
+                                --- EMPLOYEE CONTEXT (The person you are talking to) ---
+                                Name: {emp['name']}
+                                Department: {emp['department']}
+                                Designation: {emp['designation']}
+                                Join Date: {emp['join_date']}
+                                Current Leave Balance: {emp['leave_balance']} days
+                                
+                                --- USER QUESTION ---
+                                {user_question}
+                                
+                                Instructions:
+                                1. Answer the user's question directly and concisely.
+                                2. If they ask about themselves (like their balance), use the Employee Context to answer.
+                                3. If they ask about rules, use the Company HR Policy.
+                                4. Do not make up any policies that are not in the provided text.
+                                5. Be polite and helpful.
+                                """
+                                
+                                # Call Gemini
+                                response = gemini_client.models.generate_content(
+                                    model='gemini-2.5-flash',
+                                    contents=prompt
+                                )
+                                bot_reply = response.text
+                                
+                                st.markdown(bot_reply)
+                                st.session_state['chat_history'].append({"role": "assistant", "content": bot_reply})
+                                
+                            except Exception as e:
+                                st.error(f"Error communicating with Gemini AI: {str(e)}")
+                
     conn.close()
 
 def main():
-    # Initialize session state for login
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
 
-    # Sidebar for logout
     if st.session_state['logged_in']:
         with st.sidebar:
             st.write(f"Logged in as: **{st.session_state['username']}** ({st.session_state['role']})")
@@ -210,7 +288,6 @@ def main():
                 st.session_state.clear()
                 st.rerun()
 
-    # Route to correct page
     if not st.session_state['logged_in']:
         display_login()
     else:
