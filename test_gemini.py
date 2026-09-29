@@ -2,26 +2,24 @@ import os
 from dotenv import load_dotenv
 from google import genai
 
-# Load environment variables from .env file
+# Load environment variables from the .env file
 load_dotenv()
 
-# Get the API key
-api_key = os.getenv("GEMINI_API_KEY")
+# Initialize the Gemini client (it automatically looks for GEMINI_API_KEY in the environment)
+client = genai.Client()
 
-if not api_key:
-    print("Error: GEMINI_API_KEY not found. Please check your .env file.")
-else:
-    print("API Key found. Testing Gemini...")
+def test_gemini():
+    print("Sending 'say hello' to Gemini...")
     try:
-        # Initialize the client
-        client = genai.Client(api_key=api_key)
-        
-        # Call the Gemini Flash model
+        # Use the flash model to generate a response
         response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents='Say a quick hello to a student building an HRMS project!'
+            model='gemini-2.5-flash',
+            contents='Say exactly this: Hello! The API is working perfectly.'
         )
         print("\nGemini says:")
         print(response.text)
     except Exception as e:
-        print(f"\nError calling Gemini: {e}")
+        print("\nError connecting to Gemini:", str(e))
+
+if __name__ == "__main__":
+    test_gemini()
