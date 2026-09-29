@@ -17,3 +17,6 @@ __pycache__/
 # AI Assistant Folders
 .claude/
 .agents/
+
+# IDE Settings
+.vscode/
