@@ -5,6 +5,9 @@ from datetime import datetime, date
 import os
 from dotenv import load_dotenv
 from google import genai
+from pypdf import PdfReader
+import joblib
+import numpy as np
 
 # Load environment variables (for Gemini API Key)
 load_dotenv()
@@ -51,15 +54,14 @@ def display_login():
                 st.error("Invalid Username or Password")
 
 def display_hr_dashboard():
-    st.title("👥 HR Dashboard - Employee Management")
+    st.title("👥 HR Dashboard")
     
-    tab1, tab2, tab3 = st.tabs(["View Employees", "Add New Employee", "Leave Requests"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["View Employees", "Add New Employee", "Leave Requests", "🧠 AI Resume Screening", "🔮 Attrition Prediction"])
     
     with tab1:
         st.subheader("Employee Records")
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT id, name, email, department, designation, join_date, salary, leave_balance FROM employees", conn)
-        conn.close()
         st.dataframe(df, use_container_width=True, hide_index=True)
         
     with tab2:
@@ -76,7 +78,6 @@ def display_hr_dashboard():
             submitted = st.form_submit_button("Add Employee")
             if submitted:
                 if name and email and designation:
-                    conn = get_db_connection()
                     cursor = conn.cursor()
                     try:
                         cursor.execute('''
@@ -87,14 +88,11 @@ def display_hr_dashboard():
                         st.success(f"Employee {name} added successfully!")
                     except sqlite3.IntegrityError:
                         st.error("An employee with this email already exists.")
-                    finally:
-                        conn.close()
                 else:
                     st.error("Please fill in all required fields.")
                     
     with tab3:
         st.subheader("Pending Leave Requests")
-        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -139,7 +137,109 @@ def display_hr_dashboard():
             FROM leaves l JOIN employees e ON l.employee_id = e.id
         ''', conn)
         st.dataframe(df_leaves, use_container_width=True, hide_index=True)
-        conn.close()
+        
+    with tab4:
+        st.subheader("🧠 AI Resume Screening")
+        st.write("Upload a Job Description and candidate resumes (PDFs). The AI will score them out of 100.")
+        
+        job_description = st.text_area("Job Description / Requirements", height=150, placeholder="Paste the job description here...")
+        uploaded_files = st.file_uploader("Upload Resumes (PDF only)", type="pdf", accept_multiple_files=True)
+        
+        if st.button("Screen Resumes"):
+            if not gemini_client:
+                st.error("Gemini API Client is not initialized. Please check your .env file and API key.")
+            elif not job_description:
+                st.warning("Please provide a Job Description.")
+            elif not uploaded_files:
+                st.warning("Please upload at least one resume.")
+            else:
+                with st.spinner("Analyzing resumes... This may take a minute."):
+                    results = []
+                    for uploaded_file in uploaded_files:
+                        try:
+                            reader = PdfReader(uploaded_file)
+                            resume_text = ""
+                            for page in reader.pages:
+                                text = page.extract_text()
+                                if text:
+                                    resume_text += text + "\n"
+                                    
+                            prompt = f"""
+                            You are an expert HR Recruiter. 
+                            I will provide you with a Job Description and a Candidate's Resume.
+                            
+                            JOB DESCRIPTION:
+                            {job_description}
+                            
+                            CANDIDATE RESUME:
+                            {resume_text}
+                            
+                            TASK:
+                            1. Score the resume from 0 to 100 based on how well it matches the Job Description.
+                            2. Provide a short 2-3 sentence reason for the score, highlighting key matches or missing skills.
+                            
+                            FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+                            Score: [Number]
+                            Reason: [Your reason]
+                            """
+                            
+                            response = gemini_client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=prompt
+                            )
+                            
+                            results.append({
+                                "File Name": uploaded_file.name,
+                                "AI Feedback": response.text
+                            })
+                            
+                        except Exception as e:
+                            st.error(f"Error processing {uploaded_file.name}: {str(e)}")
+                            
+                    st.success("Screening Complete!")
+                    for res in results:
+                        with st.expander(f"Candidate: {res['File Name']}", expanded=True):
+                            st.write(res['AI Feedback'])
+
+    with tab5:
+        st.subheader("🔮 ML Attrition Prediction")
+        st.write("Predict the likelihood of an employee resigning based on historical IBM HR data.")
+        
+        try:
+            model = joblib.load('attrition_model.pkl')
+            with st.form("attrition_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    age = st.number_input("Employee Age", min_value=18, max_value=80, value=30)
+                    income = st.number_input("Monthly Income ($)", min_value=1000, value=5000, step=500)
+                    years = st.number_input("Years at Company", min_value=0, max_value=50, value=2)
+                with col2:
+                    satisfaction = st.slider("Job Satisfaction (1=Low, 4=Very High)", 1, 4, 3)
+                    overtime = st.selectbox("Does the employee work overtime?", ["No", "Yes"])
+                
+                submitted = st.form_submit_button("Predict Attrition")
+                if submitted:
+                    ot_val = 1 if overtime == "Yes" else 0
+                    input_data = pd.DataFrame([[age, income, satisfaction, ot_val, years]], 
+                                              columns=['Age', 'MonthlyIncome', 'JobSatisfaction', 'OverTime', 'YearsAtCompany'])
+                    
+                    # Get probability of class 1 (Attrition = Yes)
+                    probability = model.predict_proba(input_data)[0][1]
+                    percent = round(probability * 100, 1)
+                    
+                    if percent > 50:
+                        st.error(f"⚠️ **High Risk of Flight:** {percent}% chance this employee will resign.")
+                        st.write("Suggestion: Schedule a 1-on-1, review compensation, or check workload (overtime).")
+                    elif percent > 25:
+                        st.warning(f"🟡 **Moderate Risk:** {percent}% chance this employee will resign.")
+                        st.write("Suggestion: Monitor job satisfaction and ensure they are engaged.")
+                    else:
+                        st.success(f"✅ **Low Risk:** {percent}% chance this employee will resign.")
+                        
+        except FileNotFoundError:
+            st.error("Model file 'attrition_model.pkl' not found. Please run the training script first.")
+            
+    conn.close()
 
 def display_employee_dashboard():
     st.title("👋 Employee Portal")
@@ -209,15 +309,12 @@ def display_employee_dashboard():
             if 'chat_history' not in st.session_state:
                 st.session_state['chat_history'] = []
                 
-            # Render chat history
             for msg in st.session_state['chat_history']:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
                     
-            # Chat input
             user_question = st.chat_input("E.g. What is the notice period? or How many leaves do I have?")
             if user_question:
-                # Add user question
                 st.session_state['chat_history'].append({"role": "user", "content": user_question})
                 with st.chat_message("user"):
                     st.markdown(user_question)
@@ -228,7 +325,6 @@ def display_employee_dashboard():
                     else:
                         with st.spinner("Looking up HR Policies..."):
                             try:
-                                # Read Policy Text
                                 policy_text = ""
                                 try:
                                     with open("docs/hr_policy.txt", "r") as f:
@@ -236,7 +332,6 @@ def display_employee_dashboard():
                                 except FileNotFoundError:
                                     policy_text = "No HR policy document found."
                                 
-                                # Construct the Prompt with Context (RAG)
                                 prompt = f"""
                                 You are HireWise, a helpful and professional HR Assistant Chatbot.
                                 You are talking directly to an employee.
@@ -262,7 +357,6 @@ def display_employee_dashboard():
                                 5. Be polite and helpful.
                                 """
                                 
-                                # Call Gemini
                                 response = gemini_client.models.generate_content(
                                     model='gemini-2.5-flash',
                                     contents=prompt
