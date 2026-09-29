@@ -18,7 +18,7 @@ else:
         
         # Call the Gemini Flash model
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents='Say a quick hello to a student building an HRMS project!'
         )
         print("\nGemini says:")
