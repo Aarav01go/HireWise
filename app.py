@@ -57,13 +57,36 @@ def display_login():
     st.title("🏢 Welcome to HireWise")
     st.subheader("Please Login")
     
-    # We use a form so the page doesn't refresh on every single keystroke
-    with st.form("login_form"):
-        username = st.text_input("Username", autocomplete="new-password")
-        password = st.text_input("Password", type="password", autocomplete="new-password")
-        submitted = st.form_submit_button("Login")
-        
-        if submitted:
+    # We avoid st.form here on purpose. Brave's password manager detects 
+    # username+password fields inside a form and aggressively tries to autofill,
+    # which causes a rerun loop that crashes the browser tab.
+    # Instead we use session_state to hold the typed values between reruns.
+    
+    if 'login_username' not in st.session_state:
+        st.session_state['login_username'] = ''
+    if 'login_password' not in st.session_state:
+        st.session_state['login_password'] = ''
+    
+    st.session_state['login_username'] = st.text_input(
+        "Username", 
+        value=st.session_state['login_username'],
+        autocomplete="off",
+        key="login_user_input"
+    )
+    st.session_state['login_password'] = st.text_input(
+        "Password", 
+        type="password",
+        value=st.session_state['login_password'],
+        autocomplete="off",
+        key="login_pass_input"
+    )
+    
+    if st.button("Login", type="primary"):
+        username = st.session_state['login_username']
+        password = st.session_state['login_password']
+        if not username or not password:
+            st.warning("Please enter both username and password.")
+        else:
             user = login_user(username, password)
             if user:
                 # Store user details in session memory so Streamlit remembers them
@@ -71,6 +94,9 @@ def display_login():
                 st.session_state['username'] = user['username']
                 st.session_state['role'] = user['role']
                 st.session_state['employee_id'] = user['employee_id']
+                # Clean up login fields
+                del st.session_state['login_username']
+                del st.session_state['login_password']
                 st.success("Logged in successfully!")
                 st.rerun() # Refresh page to show the dashboard
             else:
